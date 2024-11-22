@@ -1,5 +1,4 @@
 import typer
-import click
 import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
@@ -7,19 +6,24 @@ from huggingface_hub import InferenceClient
 from typing_extensions import Annotated
 from typing import List
 import pyperclip
-
-
+from rich import print
+from rich.panel import Panel
+from rich.console import Console
 
 MAX_TOTAL_TOKENS = 8192
 MAX_OUTPUT_TOKENS = 75
 MAX_INPUT_TOKENS = MAX_TOTAL_TOKENS - MAX_OUTPUT_TOKENS
 
-app = typer.Typer()
+app = typer.Typer(help="CLI tool for generating commit messages using LLMs")
+console = Console()
 api_key = os.getenv("HF_TOKEN")
 
 if not api_key:
-    typer.echo(
-        "HF_TOKEN is not set. To create an access token, go to https://huggingface.co/docs/hub/en/security-tokens#how-to-manage-user-access-tokens"
+    console.print(
+        Panel.fit(
+            "[red]HF_TOKEN is not set.[/red]\nTo create an access token, go to [link]https://huggingface.co/docs/hub/en/security-tokens#how-to-manage-user-access-tokens[/link]",
+            title="Error"
+        )
     )
     exit(1)
 
@@ -27,7 +31,18 @@ client = InferenceClient(api_key=api_key)
 
 
 def batch_diffs(diffs: List[str]) -> List[str]:
-    """Batch multiple git diffs up to MAX_INPUT_TOKENS"""
+    """Takes a list of git diffs and batches them together while ensuring
+    each batch stays under MAX_INPUT_TOKENS in length. If a single diff is larger than
+    MAX_INPUT_TOKENS, it will be truncated.
+
+    Args:
+        diffs: A list of strings containing git diffs to be batched
+
+    Returns:
+        List[str]: A list of batched diffs, where each batch is a string containing
+                  one or more diffs joined by newlines and staying under MAX_INPUT_TOKENS
+                  in length
+    """
     batched_diffs = []
     current_batch = []
     for diff in diffs:
@@ -107,14 +122,6 @@ def generate_commit_message(
                 ],
             },
         ],
-        # response_format={
-        #     "type": "json",
-        #     "value": {
-        #         "properties": {
-        #             "message": {"type": "string"},
-        #         },
-        #     },
-        # },
         max_tokens=MAX_OUTPUT_TOKENS,
     )
 
@@ -131,65 +138,75 @@ def commit(
     ] = "meta-llama/Meta-Llama-3-70B-Instruct",
     autocommit: Annotated[
         bool,
-        typer.Option(help="Automatically commit the changes after generating the commit message"),
+        typer.Option(
+            help="Automatically commit the changes after generating the commit message"
+        ),
     ] = False,
 ):
+    """Generate commit messages for staged changes using LLMs."""
     git_diff_filenames = subprocess.check_output(
         ["git", "diff", "--cached", "--name-only"]
     ).decode("utf-8")
 
     if not git_diff_filenames:
-        typer.echo("No changes to commit")
+        console.print("[yellow]No changes to commit[/yellow]")
         return
 
-    diffs = [
-        subprocess.check_output(["git", "diff", "--cached", file]).decode("utf-8")
-        for file in git_diff_filenames.splitlines()
-    ]
-    batched_diffs = batch_diffs(diffs)
+    with console.status("[bold green]Analyzing changes..."):
+        diffs = [
+            subprocess.check_output(["git", "diff", "--cached", file]).decode("utf-8")
+            for file in git_diff_filenames.splitlines()
+        ]
+        batched_diffs = batch_diffs(diffs)
 
-    with ThreadPoolExecutor() as executor:
-        diff_summaries = list(
-            executor.map(
-                lambda changes: summarize_changes_in_file(changes, model_name),
-                batched_diffs,
+        with ThreadPoolExecutor() as executor:
+            diff_summaries = list(
+                executor.map(
+                    lambda changes: summarize_changes_in_file(changes, model_name),
+                    batched_diffs,
+                )
             )
-        )
 
     # Generate commit message based on summaries
-    commit_message = generate_commit_message(diff_summaries, model_name)
-    commit_command = f"git commit -m '{commit_message}'"
+    with console.status("[bold green]Generating commit message..."):
+        commit_message = generate_commit_message(diff_summaries, model_name)
+        commit_command = f"git commit -m '{commit_message}'"
 
     # Always show the generated message first
-    typer.echo(f'\nGenerated commit message:\n"{commit_message}"\n')
+    console.print(
+        Panel.fit(
+            commit_message,
+            title="Generated Commit Message",
+            border_style="green"
+        )
+    )
 
     if autocommit:
-        typer.echo("Auto-committing changes...")
+        console.print("[bold green]Auto-committing changes...[/bold green]")
         subprocess.run(commit_command, shell=True)
         return
 
-    # Present options to the user
-    choices = ["(c)ommit", "(cp) copy to clipboard", "(a)bort"]
-
-
     while True:
         choice = typer.prompt(
-            "Action ([c]ommit / [cp] copy to clipboard / [a]bort)",
+            "\nAction",
+            type=click.Choice(["c", "cp", "a"], case_sensitive=False),
+            show_choices=True,
+            show_default=True,
+            default="c",
         )
 
-        if choice in ["(c)ommit", "c"]:
-            # subprocess.run(commit_command, shell=True)
-            typer.echo("Committed!")
+        if choice == "c":
+            console.print("[bold green]Committing changes...[/bold green]")
+            subprocess.run(commit_command, shell=True)
             break
-        elif choice in ["(cp) copy to clipboard", "cp"]:
+        elif choice == "cp":
             pyperclip.copy(commit_message)
-            typer.echo("Commit message copied to clipboard!")
+            console.print("[green]✓[/green] Commit message copied to clipboard!")
             break
-        elif choice in ["(a)bort", "a"]:
-            typer.echo("Commit aborted")
+        elif choice == "a":
+            console.print("[yellow]Commit aborted[/yellow]")
             raise typer.Abort()
-        else:
-            typer.echo("Invalid choice. Choose one of the options above.")
+
 
 if __name__ == "__main__":
     app()
