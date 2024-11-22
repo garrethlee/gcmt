@@ -199,7 +199,7 @@ def commit(
         ),
     ] = False,
 ):
-    """Generate commit messages for staged changes using LLMs."""
+    """Generate commit messages for staged changes using the Hugging Face Inference API."""
     git_diff_filenames = subprocess.check_output(
         ["git", "diff", "--cached", "--name-only"]
     ).decode("utf-8")
@@ -238,8 +238,6 @@ def commit(
         console.print("[bold green]Auto-committing changes...[/bold green]")
         subprocess.run(commit_command, shell=True)
         return
-
-    edit_history = []
 
     while True:
         choice = (

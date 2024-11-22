@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cm"
+name = "gcmt"
 version = "0.1.0"
 description = "A simple CLI tool that uses LLMs to automatically generate meaningful commit messages from your staged changes."
 readme = "README.md"
@@ -20,4 +20,4 @@ dependencies = [
 ]
 
 [project.scripts]
-cm = "cm.cli:app"
+gcmt = "gcmt.cli:app"
