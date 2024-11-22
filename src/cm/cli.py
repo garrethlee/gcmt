@@ -1,8 +1,9 @@
 import os
 import random
+import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
-from typing import List
+from typing import List, Optional
 
 import pyperclip
 import typer
@@ -15,6 +16,8 @@ from typing_extensions import Annotated
 MAX_TOTAL_TOKENS = 8192
 MAX_OUTPUT_TOKENS = 75
 MAX_INPUT_TOKENS = MAX_TOTAL_TOKENS - MAX_OUTPUT_TOKENS
+
+EDIT_PROMPT = re.compile(r'"(.*)"')
 
 app = typer.Typer(help="CLI tool for generating commit messages using LLMs")
 console = Console()
@@ -100,6 +103,7 @@ def generate_commit_message(
         "Output the commit message and nothing else. "
         "Here are the changes: {diff_summaries}"
     ),
+    user_prompt: Optional[str] = None,
     **kwargs,
 ) -> str:
     """Generate a commit message based on the summaries of the changes in the files.
@@ -115,20 +119,68 @@ def generate_commit_message(
 
     diff_summaries = "\n".join(diff_summaries)
 
+    content = prompt.format(diff_summaries=diff_summaries)
+
+    # Add user prompt if provided
+    if user_prompt:
+        if len(content) + len(user_prompt) > MAX_INPUT_TOKENS:
+            # Add ``` to the end in case of truncation
+            # TODO: Handle this better
+            content = content[: MAX_INPUT_TOKENS - len(user_prompt) - 3] + "```"
+        content += f"\n\n Make sure to include the following in your commit message: {user_prompt}"
+
     resp = client.chat_completion(
         model=model_name,
         messages=[
             {
                 "role": "user",
-                "content": prompt.format(diff_summaries=diff_summaries)[
-                    :MAX_INPUT_TOKENS
-                ],
+                "content": content[:MAX_INPUT_TOKENS],
             },
         ],
         max_tokens=MAX_OUTPUT_TOKENS,
         **kwargs,
     )
 
+    return resp.choices[0].message.content
+
+
+def edit_commit_message(
+    commit_message: str,
+    model_name: str,
+    instructions: str,
+    prompt: str = (
+        "Edit the following commit message: {commit_message} "
+        "according to the following instructions: {instructions}. "
+        "Output the edited commit message and nothing else."
+    ),
+    **kwargs,
+) -> str:
+    """Edit an existing commit message according to provided instructions.
+
+    Args:
+        commit_message: The original commit message to edit
+        model_name: The name of the model to use for editing the commit message
+        instructions: Instructions on how to edit the commit message
+        prompt: Template string for the prompt to send to the LLM. Should contain {commit_message}
+               and {instructions} placeholders which will be replaced with the actual values
+        **kwargs: Additional keyword arguments to pass to the chat completion API
+
+    Returns:
+        str: The edited commit message
+    """
+    resp = client.chat_completion(
+        model=model_name,
+        messages=[
+            {
+                "role": "user",
+                "content": prompt.format(
+                    commit_message=commit_message, instructions=instructions
+                )[:MAX_INPUT_TOKENS],
+            },
+        ],
+        max_tokens=MAX_OUTPUT_TOKENS,
+        **kwargs,
+    )
     return resp.choices[0].message.content
 
 
@@ -187,13 +239,19 @@ def commit(
         subprocess.run(commit_command, shell=True)
         return
 
+    edit_history = []
+
     while True:
-        choice = typer.prompt(
-            "\nAction [(c)ommit, (cp) copy to clipboard, (r)e-generate, (a)bort]",
-            show_choices=True,
-            show_default=True,
-            default="c",
-        ).lower().strip()
+        choice = (
+            typer.prompt(
+                "\nAction [(c)ommit, (cp) copy to clipboard, (e)dit, (r)e-generate, (a)bort]",
+                show_choices=True,
+                show_default=True,
+                default="c",
+            )
+            .lower()
+            .strip()
+        )
 
         if choice == "c":
             console.print("[bold green]Committing changes...[/bold green]")
@@ -206,7 +264,29 @@ def commit(
         elif choice == "r":
             with console.status("[bold green]Re-generating commit message..."):
                 commit_message = generate_commit_message(
-                    diff_summaries, model_name, seed=random.randint(0, 2**32 - 1))
+                    diff_summaries, model_name, seed=random.randint(0, 2**32 - 1)
+                )
+            console.print(
+                Panel.fit(
+                    commit_message,
+                    title="Re-generated Commit Message",
+                    border_style="green",
+                )
+            )
+        elif "e" in choice:
+            user_prompt = EDIT_PROMPT.search(choice)
+            if user_prompt:
+                user_prompt = user_prompt.group(1)
+            else:
+                console.print('[yellow]Syntax: e "<instructions>"[/yellow]')
+                continue
+
+            with console.status("[bold green]Re-generating commit message..."):
+                commit_message = edit_commit_message(
+                    commit_message,
+                    model_name,
+                    instructions=user_prompt,
+                )
             # Always show the generated message first
             console.print(
                 Panel.fit(
