@@ -6,6 +6,7 @@ from huggingface_hub import InferenceClient
 from typing_extensions import Annotated
 from typing import List
 import pyperclip
+import click
 from rich import print
 from rich.panel import Panel
 from rich.console import Console
