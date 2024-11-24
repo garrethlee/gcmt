@@ -43,4 +43,4 @@ After generating a commit message, you'll be prompted with several options:
 - `r`: Re-generate a new commit message
 - `a`: Abort the commit process
 
-> Fun Fact: All of the commit messages in this project were generated using gcmt :)
+> 🎉 __Fun Fact__: All of the commit messages in this project were generated using gcmt :)
