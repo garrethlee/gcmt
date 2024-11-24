@@ -263,6 +263,7 @@ def commit(
                 commit_message = generate_commit_message(
                     diff_summaries, model_name, seed=random.randint(0, 2**32 - 1)
                 )
+                commit_command = f"git commit -m '{commit_message}'"
             console.print(
                 Panel.fit(
                     commit_message,
@@ -284,6 +285,7 @@ def commit(
                     model_name,
                     instructions=user_prompt,
                 )
+                commit_command = f"git commit -m '{commit_message}'"
             # Always show the generated message first
             console.print(
                 Panel.fit(
