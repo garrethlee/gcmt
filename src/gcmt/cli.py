@@ -8,7 +8,6 @@ from typing import List, Optional
 import pyperclip
 import typer
 from huggingface_hub import InferenceClient
-from rich import print
 from rich.console import Console
 from rich.panel import Panel
 from typing_extensions import Annotated
